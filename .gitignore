@@ -1,0 +1,27 @@
+# Dependencias
+node_modules/
+
+# Directorios de compilación y empaquetado
+dist/
+build/
+
+# Archivos de depuración y logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# Archivos locales de configuración o pruebas
+osu-randomizer-data.json
+*.tmp
+*.temp
+
+# Archivos del sistema
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Entornos IDE
+.vscode/
+.idea/
+*.swp

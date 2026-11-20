@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>osu! Randomizer</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Encabezado de la Aplicación -->
+  <header class="app-header">
+    <div class="brand">
+      <div class="brand-logo">
+        <svg viewBox="0 0 100 100" class="osu-circle-svg">
+          <circle cx="50" cy="50" r="46" class="osu-ring" />
+          <circle cx="50" cy="50" r="38" class="osu-body" />
+          <text x="50" y="58" class="osu-text" text-anchor="middle">osu!</text>
+        </svg>
+      </div>
+      <div class="brand-info">
+        <h1>osu! Randomizer</h1>
+        <p class="subtitle">Explorador & Descargador de Beatmaps Aleatorios</p>
+      </div>
+    </div>
+    <div class="header-status">
+      <span class="status-indicator online"></span>
+      <span id="mirrorStatusText" class="status-text">Mirror: Catboy.best</span>
+      <span class="badge-version">v1.0.0</span>
+    </div>
+  </header>
+
+  <!-- Contenedor Principal Panorámico en Dos Columnas -->
+  <main class="app-container">
+    
+    <!-- COLUMNA IZQUIERDA: Controles, Filtros y Biblioteca -->
+    <aside class="sidebar-panel">
+      
+      <!-- Tarjeta Principal de Control -->
+      <section class="card control-card">
+        <button id="btnRandom" class="btn btn-primary btn-random">
+          <span class="btn-icon">🎲</span>
+          <span class="btn-text">Mapa Aleatorio</span>
+          <span class="shortcut-pill">R / Enter</span>
+        </button>
+
+        <div class="chaos-toggle-container">
+          <label class="switch-label" for="toggleChaos">
+            <input type="checkbox" id="toggleChaos" checked>
+            <span class="slider"></span>
+            <span class="switch-title">100% Aleatorio (Sin filtros)</span>
+          </label>
+          <span class="chaos-hint">Descubre cualquier mapa sin restricciones de dificultad o modo.</span>
+        </div>
+
+        <!-- Panel Desplegable de Filtros Opcionales -->
+        <div id="filtersSection" class="filters-panel collapsed">
+          <div class="filter-group">
+            <label class="filter-label">Modo de juego:</label>
+            <div class="mode-chips">
+              <button type="button" class="chip active" data-mode="all">Todos</button>
+              <button type="button" class="chip" data-mode="0">osu! std</button>
+              <button type="button" class="chip" data-mode="1">taiko</button>
+              <button type="button" class="chip" data-mode="2">catch</button>
+              <button type="button" class="chip" data-mode="3">mania</button>
+            </div>
+          </div>
+
+          <div class="filter-group">
+            <div class="filter-label-row">
+              <label class="filter-label">Dificultad (Star Rating):</label>
+              <span id="starRatingDisplay" class="filter-val-badge">0.0★ - 10.0★</span>
+            </div>
+            <div class="dual-range-container">
+              <div class="range-row">
+                <span class="range-sublabel">Mínimo:</span>
+                <input type="range" id="filterMinStars" min="0" max="10" step="0.5" value="0">
+                <span id="minStarsVal" class="range-num">0.0★</span>
+              </div>
+              <div class="range-row">
+                <span class="range-sublabel">Máximo:</span>
+                <input type="range" id="filterMaxStars" min="0" max="10" step="0.5" value="10">
+                <span id="maxStarsVal" class="range-num">10.0★</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="filter-group">
+            <label class="filter-label" for="filterStatus">Estado del mapa:</label>
+            <select id="filterStatus" class="select-input">
+              <option value="all">Cualquier estado</option>
+              <option value="1">Ranked</option>
+              <option value="4">Loved</option>
+              <option value="0">Unranked / Graveyard</option>
+            </select>
+          </div>
+        </div>
+      </section>
+
+      <!-- Tarjeta de Ajustes de Carpeta -->
+      <section class="card settings-card">
+        <div class="card-header-compact">
+          <span class="card-icon">📂</span>
+          <h3>Carpeta de Importación osu!</h3>
+        </div>
+        <p class="settings-desc">Los archivos <code>.osz</code> se guardan aquí para importarse con un clic.</p>
+        <div class="path-display-box" id="currentDownloadPath" title="Haz clic para cambiar">C:\...</div>
+        <div class="settings-actions">
+          <button id="btnChangeFolder" class="btn btn-secondary btn-sm">📁 Cambiar carpeta</button>
+          <button id="btnResetFolder" class="btn btn-ghost btn-sm" title="Restablecer a Descargas">↺ Restablecer</button>
+        </div>
+      </section>
+
+      <!-- Tarjeta de Historial y Favoritos -->
+      <section class="card library-card">
+        <div class="library-tabs">
+          <button id="tabHistory" class="tab-btn active">
+            📜 Historial <span id="historyCount" class="tab-badge">0</span>
+          </button>
+          <button id="tabFavorites" class="tab-btn">
+            ⭐ Favoritos <span id="favoritesCount" class="tab-badge">0</span>
+          </button>
+        </div>
+        <div class="library-search-box">
+          <input type="text" id="librarySearch" placeholder="Filtrar por título, artista o mapper..." class="search-input">
+        </div>
+        <div id="libraryList" class="library-list">
+          <!-- Elementos generados dinámicamente -->
+        </div>
+      </section>
+
+    </aside>
+
+    <!-- COLUMNA DERECHA: Escenario Principal del Beatmap -->
+    <section class="stage-panel">
+
+      <!-- Estado Inicial / Vacío -->
+      <div id="emptyState" class="empty-state">
+        <div class="empty-illustration">
+          <div class="dice-floating">🎲</div>
+        </div>
+        <h2>¿Listo para descubrir nuevos beatmaps?</h2>
+        <p>Presiona el botón <strong>"Mapa Aleatorio"</strong> o la tecla <kbd>R</kbd> para generar tu primer mapa desde los mirrors oficiales.</p>
+        
+        <div class="shortcut-guide">
+          <h3>Atajos de Teclado Globales</h3>
+          <div class="shortcuts-grid">
+            <div class="shortcut-item">
+              <kbd>R</kbd> o <kbd>Enter</kbd>
+              <span>Generar nuevo mapa aleatorio</span>
+            </div>
+            <div class="shortcut-item">
+              <kbd>Espacio</kbd>
+              <span>Reproducir / Pausar preview de audio</span>
+            </div>
+            <div class="shortcut-item">
+              <kbd>D</kbd>
+              <span>Descargar el beatmap actual</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Estado de Carga -->
+      <div id="loadingState" class="loading-state hidden">
+        <div class="loader-spinner"></div>
+        <h3 id="loadingText">Buscando beatmap en los mirrors...</h3>
+        <p class="loading-sub">Consultando catálogo sin duplicados...</p>
+      </div>
+
+      <!-- Tarjeta Principal del Beatmap Generado -->
+      <article id="beatmapCard" class="beatmap-card hidden">
+        
+        <!-- Banner de Portada Heroica -->
+        <div class="card-hero">
+          <img id="cardCoverImg" class="hero-cover-img" alt="Portada de beatmap" src="">
+          <div class="hero-gradient"></div>
+
+          <div class="hero-top-actions">
+            <button id="btnToggleFavorite" class="btn-icon-round" title="Guardar en favoritos">
+              <span id="favIcon" class="icon-heart">🤍</span>
+            </button>
+            <button id="btnOpenWeb" class="btn-icon-round" title="Abrir en osu!web (osu.ppy.sh)">
+              <span class="icon-external">🌐</span>
+            </button>
+          </div>
+
+          <div class="hero-content">
+            <div class="hero-tags">
+              <span id="mapStatusBadge" class="status-pill">Ranked</span>
+              <span id="mapSetIdBadge" class="meta-pill">Set #0</span>
+            </div>
+            <h2 id="mapTitle" class="hero-title">Título del Beatmap</h2>
+            <h3 id="mapArtist" class="hero-artist">Artista de la Canción</h3>
+            <p class="hero-mapper">
+              Mapeado por <strong id="mapCreator">Mapper</strong>
+            </p>
+          </div>
+        </div>
+
+        <!-- Barra de Metadatos Rápidos -->
+        <div class="meta-stats-bar">
+          <div class="meta-stat-item">
+            <span class="meta-icon">⏱️</span>
+            <div class="meta-stat-data">
+              <span class="meta-label">Duración</span>
+              <strong id="mapDuration" class="meta-val">00:00</strong>
+            </div>
+          </div>
+          <div class="meta-stat-item">
+            <span class="meta-icon">🥁</span>
+            <div class="meta-stat-data">
+              <span class="meta-label">BPM</span>
+              <strong id="mapBpm" class="meta-val">0</strong>
+            </div>
+          </div>
+          <div class="meta-stat-item">
+            <span class="meta-icon">⭐</span>
+            <div class="meta-stat-data">
+              <span class="meta-label">Dificultad Promedio</span>
+              <strong id="mapAvgStars" class="meta-val">0.0★</strong>
+            </div>
+          </div>
+          <div class="meta-stat-item">
+            <span class="meta-icon">🎴</span>
+            <div class="meta-stat-data">
+              <span class="meta-label">Dificultades</span>
+              <strong id="mapDiffCount" class="meta-val">0</strong>
+            </div>
+          </div>
+        </div>
+
+        <!-- Reproductor de Audio Preview Integrado -->
+        <section class="audio-player-card">
+          <audio id="previewAudio" preload="none"></audio>
+          
+          <button id="btnAudioPlay" class="btn-play-pause" title="Reproducir preview [Espacio]">
+            <span id="playIcon">▶</span>
+          </button>
+
+          <div class="audio-visualizer-container">
+            <div class="equalizer-bars" id="equalizerBars">
+              <span class="bar"></span>
+              <span class="bar"></span>
+              <span class="bar"></span>
+              <span class="bar"></span>
+              <span class="bar"></span>
+              <span class="bar"></span>
+            </div>
+            <div class="audio-timeline-wrap">
+              <div class="time-readout">
+                <span id="audioCurrentTime">0:00</span>
+                <span class="time-sep">/</span>
+                <span id="audioTotalTime">0:30</span>
+              </div>
+              <input type="range" id="audioSeekbar" class="audio-seekbar" min="0" max="100" value="0" step="0.1">
+            </div>
+          </div>
+
+          <div class="audio-volume-wrap">
+            <span id="volumeIcon" class="volume-icon" title="Silenciar">🔊</span>
+            <input type="range" id="audioVolume" class="volume-slider" min="0" max="1" step="0.05" value="0.65">
+          </div>
+        </section>
+
+        <!-- Listado Completo de Dificultades -->
+        <section class="difficulties-section">
+          <div class="diff-section-header">
+            <h4>Dificultades Incluidas</h4>
+            <span class="diff-header-sub">Ordenadas por Star Rating</span>
+          </div>
+          <div id="diffsList" class="diffs-grid">
+            <!-- Badges generados dinámicamente -->
+          </div>
+        </section>
+
+        <!-- Zona de Descarga e Importación Directa -->
+        <section class="download-section">
+          <div class="download-main-row">
+            <button id="btnDownload" class="btn btn-download">
+              <span class="btn-icon">⬇️</span>
+              <span id="downloadBtnText" class="btn-text">Descargar Beatmap (.osz)</span>
+              <span class="shortcut-pill">D</span>
+            </button>
+
+            <button id="btnOpenInOsu" class="btn btn-osu-import hidden">
+              <span class="btn-icon">🚀</span>
+              <span class="btn-text">Abrir en osu!</span>
+            </button>
+          </div>
+
+          <!-- Barra de Progreso de Descarga -->
+          <div id="downloadProgressContainer" class="download-progress-container hidden">
+            <div class="progress-bar-bg">
+              <div id="downloadProgressBar" class="progress-bar-fill" style="width: 0%"></div>
+            </div>
+            <div class="progress-text-row">
+              <span id="downloadStatusText" class="progress-status">Descargando...</span>
+              <span id="downloadPercentText" class="progress-percent">0%</span>
+            </div>
+          </div>
+        </section>
+
+      </article>
+
+    </section>
+
+  </main>
+
+  <!-- Contenedor para Notificaciones Toast Flotantes -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <!-- Script del Renderer -->
+  <script src="app.js"></script>
+</body>
+</html>
