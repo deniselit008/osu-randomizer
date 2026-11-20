@@ -1,6 +1,6 @@
 {
   "name": "osu-randomizer",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Descubre, previsualiza y descarga beatmaps aleatorios de osu! con un clic",
   "main": "main.js",
   "scripts": {

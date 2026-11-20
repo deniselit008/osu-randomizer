@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
-const { Readable } = require('stream');
+const { Transform, Readable } = require('stream');
 const { pipeline } = require('stream/promises');
 
 // Conjunto de IDs mostrados en la sesión para aleatoriedad sin repeticiones
@@ -38,6 +38,37 @@ function detectDefaultDownloadFolder() {
   }
 
   return app.getPath('downloads');
+}
+
+/**
+ * Verifica si un archivo es un ZIP/OSZ válido y completo comprobando sus firmas PK
+ */
+function isValidZipFile(filePath, expectedSize = 0) {
+  try {
+    if (!fs.existsSync(filePath)) return false;
+    const stats = fs.statSync(filePath);
+    if (stats.size < 22) return false;
+    if (expectedSize > 0 && stats.size !== expectedSize) return false;
+
+    const fd = fs.openSync(filePath, 'r');
+    const header = Buffer.alloc(4);
+    fs.readSync(fd, header, 0, 4, 0);
+    // Firma ZIP Local File Header (0x04034b50 -> PK\x03\x04)
+    if (header.readUInt32LE(0) !== 0x04034b50) {
+      fs.closeSync(fd);
+      return false;
+    }
+
+    // Firma End of Central Directory (PK\x05\x06) en los últimos bytes
+    const tailSize = Math.min(stats.size, 2048);
+    const tail = Buffer.alloc(tailSize);
+    fs.readSync(fd, tail, 0, tailSize, stats.size - tailSize);
+    fs.closeSync(fd);
+
+    return tail.includes(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -129,7 +160,6 @@ function createWindow() {
 
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 
-  // Manejar apertura de enlaces externos
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('http:') || url.startsWith('https:')) {
       shell.openExternal(url);
@@ -142,17 +172,14 @@ function createWindow() {
 // Registro de Canales IPC
 // -------------------------------------------------------------
 
-// Obtener datos iniciales
 ipcMain.handle('get-store-data', async () => {
   return loadStoreData();
 });
 
-// Guardar datos
 ipcMain.handle('save-store-data', async (event, data) => {
   return saveStoreData(data);
 });
 
-// Selector nativo de directorio para descargas
 ipcMain.handle('select-folder', async () => {
   if (!mainWindow) return null;
   const result = await dialog.showOpenDialog(mainWindow, {
@@ -165,20 +192,20 @@ ipcMain.handle('select-folder', async () => {
   return result.filePaths[0];
 });
 
-// Obtener carpeta por defecto del sistema
 ipcMain.handle('get-default-folder', () => {
   return detectDefaultDownloadFolder();
 });
 
-// Abrir archivo .osz en osu! o launcher predeterminado
 ipcMain.handle('open-in-osu', async (event, filePath) => {
   try {
     if (!filePath || !fs.existsSync(filePath)) {
       return { success: false, error: 'El archivo no existe en el disco.' };
     }
+    if (!isValidZipFile(filePath)) {
+      return { success: false, error: 'El archivo .osz está dañado o incompleto. Vuelve a descargarlo.' };
+    }
     const result = await shell.openPath(filePath);
     if (result) {
-      // Si shell.openPath devuelve un string, es un mensaje de error
       return { success: false, error: result };
     }
     return { success: true };
@@ -187,7 +214,6 @@ ipcMain.handle('open-in-osu', async (event, filePath) => {
   }
 });
 
-// Abrir enlaces externos en el navegador web
 ipcMain.handle('open-external', async (event, url) => {
   try {
     if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
@@ -200,7 +226,6 @@ ipcMain.handle('open-external', async (event, url) => {
   }
 });
 
-// Comprobar si un beatmap ya está descargado en la carpeta de destino
 ipcMain.handle('check-beatmap-downloaded', async (event, { beatmapsetId, artist, title, downloadFolder }) => {
   try {
     const folder = downloadFolder || detectDefaultDownloadFolder();
@@ -209,11 +234,9 @@ ipcMain.handle('check-beatmap-downloaded', async (event, { beatmapsetId, artist,
     const fileName = `${beatmapsetId} ${safeArtist} - ${safeTitle}.osz`;
     const fullPath = path.join(folder, fileName);
 
-    if (fs.existsSync(fullPath)) {
-      const stats = fs.statSync(fullPath);
-      if (stats.size > 1024) {
-        return { exists: true, filePath: fullPath };
-      }
+    // Validar integridad real del archivo antes de considerarlo descargado
+    if (isValidZipFile(fullPath)) {
+      return { exists: true, filePath: fullPath };
     }
     return { exists: false };
   } catch {
@@ -221,9 +244,6 @@ ipcMain.handle('check-beatmap-downloaded', async (event, { beatmapsetId, artist,
   }
 });
 
-/**
- * Consulta un mirror con timeout
- */
 async function fetchWithTimeout(url, timeoutMs = 8000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -248,16 +268,13 @@ ipcMain.handle('get-random-beatmap', async (event, { chaosMode = true, filters =
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      // 1. Probar API Principal: Catboy
       let url = 'https://catboy.best/api/v2/search?';
       const params = new URLSearchParams();
 
       if (chaosMode) {
-        // En modo Caos, generar un offset aleatorio amplio (hasta 120,000)
         const randomOffset = Math.floor(Math.random() * 120000);
         params.append('offset', String(randomOffset));
       } else {
-        // En modo con filtros, buscar dentro de un rango más concentrado
         const randomOffset = Math.floor(Math.random() * 4000);
         params.append('offset', String(randomOffset));
 
@@ -280,7 +297,6 @@ ipcMain.handle('get-random-beatmap', async (event, { chaosMode = true, filters =
           data = await response.json();
         }
       } catch (catboyErr) {
-        // Fallback a Nerinyan si Catboy falla
         mirrorUsed = 'api.nerinyan.moe';
         const fallbackUrl = `https://api.nerinyan.moe/search?q=&page=${Math.floor(Math.random() * 200)}`;
         try {
@@ -297,16 +313,12 @@ ipcMain.handle('get-random-beatmap', async (event, { chaosMode = true, filters =
         continue;
       }
 
-      // Filtrar mapas ya mostrados en la sesión
       let candidates = data.filter(item => item && item.id && !seenBeatmapsetIds.has(item.id));
 
-      // Si todos los mapas del batch ya fueron mostrados pero hay elementos,
-      // permitimos reutilizar si la sesión ya vio demasiados
       if (candidates.length === 0 && data.length > 0) {
         candidates = data;
       }
 
-      // Aplicar filtros de dificultad en cliente si no es Caos
       if (!chaosMode && candidates.length > 0) {
         const minStars = parseFloat(filters.minStars) || 0;
         const maxStars = parseFloat(filters.maxStars) || 10;
@@ -326,7 +338,6 @@ ipcMain.handle('get-random-beatmap', async (event, { chaosMode = true, filters =
         continue;
       }
 
-      // Elegir aleatoriamente uno de los candidatos válidos
       const chosen = candidates[Math.floor(Math.random() * candidates.length)];
       seenBeatmapsetIds.add(chosen.id);
 
@@ -347,7 +358,7 @@ ipcMain.handle('get-random-beatmap', async (event, { chaosMode = true, filters =
   };
 });
 
-// Descarga en Stream con cálculo y emisión de progreso
+// Descarga en Stream con Transform Stream (control estricto de backpressure y archivo temporal atómico)
 ipcMain.handle('download-beatmap', async (event, { beatmapset, destinationFolder }) => {
   if (!beatmapset || !beatmapset.id) {
     return { success: false, error: 'Información de beatmap inválida.' };
@@ -360,13 +371,13 @@ ipcMain.handle('download-beatmap', async (event, { beatmapset, destinationFolder
   const safeTitle = sanitizeFilename(beatmapset.title);
   const fileName = `${beatmapset.id} ${safeArtist} - ${safeTitle}.osz`;
   const filePath = path.join(folder, fileName);
+  const tempPath = `${filePath}.downloading`;
 
   const downloadUrls = [
     `https://catboy.best/d/${beatmapset.id}`,
     `https://api.nerinyan.moe/d/${beatmapset.id}`
   ];
 
-  let downloadedSuccess = false;
   let finalError = null;
 
   for (const url of downloadUrls) {
@@ -393,45 +404,53 @@ ipcMain.handle('download-beatmap', async (event, { beatmapset, destinationFolder
       const totalBytes = parseInt(response.headers.get('content-length') || '0', 10);
       let downloadedBytes = 0;
 
-      const fileWriteStream = fs.createWriteStream(filePath);
-      const webStream = Readable.fromWeb(response.body);
-
-      webStream.on('data', chunk => {
-        downloadedBytes += chunk.length;
-        const percent = totalBytes > 0 ? Math.min(100, Math.round((downloadedBytes / totalBytes) * 100)) : 0;
-        event.sender.send('download-progress', {
-          id: beatmapset.id,
-          percent,
-          downloadedBytes,
-          totalBytes,
-          status: 'downloading'
-        });
+      // Transform stream para seguimiento del progreso sin romper backpressure
+      const progressTransform = new Transform({
+        transform(chunk, encoding, callback) {
+          downloadedBytes += chunk.length;
+          const percent = totalBytes > 0 ? Math.min(100, Math.round((downloadedBytes / totalBytes) * 100)) : 0;
+          event.sender.send('download-progress', {
+            id: beatmapset.id,
+            percent,
+            downloadedBytes,
+            totalBytes,
+            status: 'downloading'
+          });
+          callback(null, chunk);
+        }
       });
 
-      await pipeline(webStream, fileWriteStream);
+      const fileWriteStream = fs.createWriteStream(tempPath);
+      const webStream = Readable.fromWeb(response.body);
 
-      // Verificar que el archivo no quedó vacío
-      const stats = fs.statSync(filePath);
-      if (stats.size < 1000) {
-        throw new Error('Archivo descargado corrupto o demasiado pequeño.');
+      // Pipeline completo y atómico
+      await pipeline(webStream, progressTransform, fileWriteStream);
+
+      // Validación estricta de integridad de datos y estructura ZIP
+      if (!isValidZipFile(tempPath, totalBytes)) {
+        throw new Error('La descarga se completó pero el archivo ZIP está incompleto o dañado.');
       }
+
+      // Reemplazo atómico una vez validado al 100%
+      if (fs.existsSync(filePath)) {
+        try { fs.unlinkSync(filePath); } catch (_) {}
+      }
+      fs.renameSync(tempPath, filePath);
 
       event.sender.send('download-progress', {
         id: beatmapset.id,
         percent: 100,
-        downloadedBytes: stats.size,
-        totalBytes: stats.size,
+        downloadedBytes,
+        totalBytes,
         status: 'completed',
         filePath
       });
 
-      downloadedSuccess = true;
       return { success: true, filePath };
     } catch (err) {
       finalError = err.message;
-      // Limpiar archivo incompleto en caso de error
-      if (fs.existsSync(filePath)) {
-        try { fs.unlinkSync(filePath); } catch (_) {}
+      if (fs.existsSync(tempPath)) {
+        try { fs.unlinkSync(tempPath); } catch (_) {}
       }
     }
   }
@@ -448,7 +467,6 @@ ipcMain.handle('download-beatmap', async (event, { beatmapset, destinationFolder
   return { success: false, error: finalError || 'No se pudo descargar el beatmap.' };
 });
 
-// Ciclo de vida de la aplicación
 app.whenReady().then(() => {
   createWindow();
 
